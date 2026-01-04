@@ -85,6 +85,8 @@ export function RunScreen({
   onFinish,
   onBack,
 }: RunScreenProps) {
+  const [countdown, setCountdown] = useState(3);
+  const [isCountingDown, setIsCountingDown] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [distanceMeters, setDistanceMeters] = useState(0);
@@ -100,6 +102,26 @@ export function RunScreen({
   const lastAnnouncementRef = useRef({ minutes: 0, km: 0 });
 
   useEffect(() => {
+    if (!isCountingDown) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          setIsCountingDown(false);
+          startTimeRef.current = new Date();
+          lastAnnouncementRef.current = { minutes: 0, km: 0 };
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isCountingDown]);
+
+  useEffect(() => {
     elapsedRef.current = elapsedSeconds;
   }, [elapsedSeconds]);
 
@@ -112,7 +134,7 @@ export function RunScreen({
   }, [currentLocation]);
 
   useEffect(() => {
-    if (isPaused) {
+    if (isPaused || isCountingDown) {
       return;
     }
 
@@ -334,8 +356,13 @@ export function RunScreen({
 
         <View style={styles.controlsCard}>
           <TouchableOpacity
-            style={[styles.pauseButton, isPaused && styles.pauseButtonActive]}
+            style={[
+              styles.pauseButton,
+              isPaused && styles.pauseButtonActive,
+              isCountingDown && styles.pauseButtonDisabled,
+            ]}
             onPress={() => setIsPaused((prev) => !prev)}
+            disabled={isCountingDown}
           >
             <Text style={styles.pauseButtonText}>
               {isPaused ? "Retomar corrida" : "Pausar corrida"}
@@ -395,6 +422,13 @@ export function RunScreen({
           )}
         </View>
       </ScrollView>
+      {isCountingDown && (
+        <View style={styles.countdownOverlay}>
+          <Text style={styles.countdownLabel}>Prepare-se</Text>
+          <Text style={styles.countdownValue}>{countdown}</Text>
+          <Text style={styles.countdownHint}>A corrida começa já</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -531,6 +565,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFEAD5",
     borderColor: "#FEC84B",
   },
+  pauseButtonDisabled: {
+    opacity: 0.6,
+  },
   pauseButtonText: {
     color: "#1F5EFF",
     fontWeight: "600",
@@ -601,5 +638,29 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 11,
     color: "#98A2B3",
+  },
+  countdownOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(16, 24, 40, 0.75)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  countdownLabel: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    marginBottom: 16,
+  },
+  countdownValue: {
+    fontSize: 88,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 4,
+  },
+  countdownHint: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#D0D5DD",
   },
 });
