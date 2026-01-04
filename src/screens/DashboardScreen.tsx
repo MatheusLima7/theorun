@@ -9,9 +9,17 @@ import {
 
 interface DashboardScreenProps {
   onLogout: () => void;
+  onStartRun: () => void;
+  onOpenActivities: () => void;
+  onOpenSettings: () => void;
 }
 
-export function DashboardScreen({ onLogout }: DashboardScreenProps) {
+export function DashboardScreen({
+  onLogout,
+  onStartRun,
+  onOpenActivities,
+  onOpenSettings,
+}: DashboardScreenProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
@@ -48,6 +56,20 @@ export function DashboardScreen({ onLogout }: DashboardScreenProps) {
             </View>
           </View>
         </View>
+        <View style={styles.menuCard}>
+          <Text style={styles.cardTitle}>Menu rápido</Text>
+          <Text style={styles.cardSubtitle}>
+            Acesse suas atividades e personalize o assistente de IA.
+          </Text>
+          <View style={styles.menuButtons}>
+            <TouchableOpacity style={styles.menuButton} onPress={onOpenActivities}>
+              <Text style={styles.menuButtonText}>Atividades</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuButton} onPress={onOpenSettings}>
+              <Text style={styles.menuButtonText}>Configurações</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Vídeo da corrida</Text>
           <Text style={styles.cardSubtitle}>
@@ -64,7 +86,7 @@ export function DashboardScreen({ onLogout }: DashboardScreenProps) {
             Inicie a gravação usando GPS, acompanhe o pace e finalize com
             segurança.
           </Text>
-          <TouchableOpacity style={styles.secondaryButton}>
+          <TouchableOpacity style={styles.secondaryButton} onPress={onStartRun}>
             <Text style={styles.secondaryButtonText}>Iniciar corrida</Text>
           </TouchableOpacity>
         </View>
@@ -142,6 +164,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: "#FFFFFF",
+  },
+  menuCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: "#101828",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
+  menuButtons: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 16,
+  },
+  menuButton: {
+    flex: 1,
+    backgroundColor: "#F4F6FF",
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#D6E4FF",
+  },
+  menuButtonText: {
+    color: "#1F5EFF",
+    fontWeight: "600",
   },
   card: {
     backgroundColor: "#FFFFFF",
