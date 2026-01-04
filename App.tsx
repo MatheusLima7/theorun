@@ -13,13 +13,22 @@ import { AuthFooter } from "./src/components/AuthFooter";
 import { AuthHeader } from "./src/components/AuthHeader";
 import { AuthInput } from "./src/components/AuthInput";
 import { PrimaryButton } from "./src/components/PrimaryButton";
+import { ActivitiesScreen } from "./src/screens/ActivitiesScreen";
+import { AssistantSettingsScreen } from "./src/screens/AssistantSettingsScreen";
 import { DashboardScreen } from "./src/screens/DashboardScreen";
+import { RunScreen } from "./src/screens/RunScreen";
+import { SettingsScreen } from "./src/screens/SettingsScreen";
+import { AssistantSettings, RunSummary } from "./src/types/run";
 
 const enum Screen {
   Login = "login",
   Signup = "signup",
   Forgot = "forgot",
   Dashboard = "dashboard",
+  Run = "run",
+  Activities = "activities",
+  Settings = "settings",
+  Assistant = "assistant",
 }
 
 const SCREEN_TITLES: Record<Screen, string> = {
@@ -27,6 +36,23 @@ const SCREEN_TITLES: Record<Screen, string> = {
   [Screen.Signup]: "Criar conta",
   [Screen.Forgot]: "Recuperar senha",
   [Screen.Dashboard]: "Theo Run",
+  [Screen.Run]: "Corrida",
+  [Screen.Activities]: "Atividades",
+  [Screen.Settings]: "Configurações",
+  [Screen.Assistant]: "Assistente",
+};
+
+const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
+  enabled: true,
+  paceMode: "minPerKm",
+  announceDistance: true,
+  announceGoalStatus: true,
+  announceComparison: true,
+  saveAudioToVideo: false,
+  addVideoBreakpoints: false,
+  trigger: "minutes",
+  intervalMinutes: 2,
+  intervalKm: 1,
 };
 
 export default function App() {
@@ -34,6 +60,9 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [activities, setActivities] = useState<RunSummary[]>([]);
+  const [assistantSettings, setAssistantSettings] =
+    useState<AssistantSettings>(DEFAULT_ASSISTANT_SETTINGS);
 
   const footerText = useMemo(() => {
     if (screen === Screen.Login) {
@@ -60,7 +89,56 @@ export default function App() {
   }, [screen]);
 
   if (screen === Screen.Dashboard) {
-    return <DashboardScreen onLogout={() => setScreen(Screen.Login)} />;
+    return (
+      <DashboardScreen
+        onLogout={() => setScreen(Screen.Login)}
+        onStartRun={() => setScreen(Screen.Run)}
+        onOpenActivities={() => setScreen(Screen.Activities)}
+        onOpenSettings={() => setScreen(Screen.Settings)}
+      />
+    );
+  }
+
+  if (screen === Screen.Run) {
+    return (
+      <RunScreen
+        assistantSettings={assistantSettings}
+        lastRun={activities[0]}
+        onBack={() => setScreen(Screen.Dashboard)}
+        onFinish={(run) => {
+          setActivities((prev) => [run, ...prev]);
+          setScreen(Screen.Activities);
+        }}
+      />
+    );
+  }
+
+  if (screen === Screen.Activities) {
+    return (
+      <ActivitiesScreen
+        activities={activities}
+        onBack={() => setScreen(Screen.Dashboard)}
+      />
+    );
+  }
+
+  if (screen === Screen.Settings) {
+    return (
+      <SettingsScreen
+        onBack={() => setScreen(Screen.Dashboard)}
+        onOpenAssistant={() => setScreen(Screen.Assistant)}
+      />
+    );
+  }
+
+  if (screen === Screen.Assistant) {
+    return (
+      <AssistantSettingsScreen
+        settings={assistantSettings}
+        onBack={() => setScreen(Screen.Settings)}
+        onChange={setAssistantSettings}
+      />
+    );
   }
 
   return (
