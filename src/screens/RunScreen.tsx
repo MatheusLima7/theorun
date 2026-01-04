@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  PermissionsAndroid,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -8,9 +9,9 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
-import * as Location from "expo-location";
 import {
   AssistantEvent,
   AssistantSettings,
@@ -26,6 +27,8 @@ interface RunScreenProps {
   onFinish: (run: RunSummary) => void;
   onBack: () => void;
 }
+
+type LocationStatus = "granted" | "denied" | "undetermined";
 
 const initialLocation = {
   latitude: -22.9068,
@@ -96,7 +99,7 @@ export function RunScreen({
   const [locations, setLocations] = useState<RunSummary["locations"]>([]);
   const [assistantEvents, setAssistantEvents] = useState<AssistantEvent[]>([]);
   const [locationStatus, setLocationStatus] =
-    useState<Location.PermissionStatus>("undetermined");
+    useState<LocationStatus>("undetermined");
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isHoldingFinish, setIsHoldingFinish] = useState(false);
   const holdProgress = useRef(new Animated.Value(0)).current;
@@ -104,7 +107,6 @@ export function RunScreen({
   const elapsedRef = useRef(0);
   const distanceRef = useRef(0);
   const locationRef = useRef(initialLocation);
-  const locationWatcherRef = useRef<Location.LocationSubscription | null>(null);
   const hasLocationFixRef = useRef(false);
   const lastAnnouncementRef = useRef({ minutes: 0, km: 0 });
 
@@ -141,23 +143,42 @@ export function RunScreen({
   }, [currentLocation]);
 
   useEffect(() => {
+    if (Platform.OS !== "android") {
+      setLocationStatus("granted");
+      setLocationError(null);
+      return;
+    }
+
     let isMounted = true;
 
     const requestPermission = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (!isMounted) {
-        return;
-      }
-      setLocationStatus(status);
-      if (status !== "granted") {
-        setLocationError("Permita o acesso à localização para ver o mapa ao vivo.");
-        return;
-      }
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
-        setLocationError("Ative o GPS do dispositivo para acompanhar o mapa.");
-      } else {
-        setLocationError(null);
+      try {
+        const status = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: "Permitir localização",
+            message: "Precisamos da sua localização para mostrar o mapa ao vivo.",
+            buttonPositive: "Ok",
+          }
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (status === PermissionsAndroid.RESULTS.GRANTED) {
+          setLocationStatus("granted");
+          setLocationError(null);
+        } else {
+          setLocationStatus("denied");
+          setLocationError("Permita o acesso à localização para ver o mapa ao vivo.");
+        }
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+        setLocationStatus("denied");
+        setLocationError("Não foi possível acessar a localização no momento.");
       }
     };
 
@@ -167,77 +188,6 @@ export function RunScreen({
       isMounted = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (isPaused || isCountingDown || locationStatus !== "granted") {
-      if (locationWatcherRef.current) {
-        locationWatcherRef.current.remove();
-        locationWatcherRef.current = null;
-      }
-      return;
-    }
-
-    let isActive = true;
-
-    const startWatcher = async () => {
-      const watcher = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Highest,
-          timeInterval: 1000,
-          distanceInterval: 1,
-        },
-        (position) => {
-          if (!isActive) {
-            return;
-          }
-          const nextLocation = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          };
-
-          if (!hasLocationFixRef.current) {
-            hasLocationFixRef.current = true;
-            locationRef.current = nextLocation;
-            setCurrentLocation(nextLocation);
-            return;
-          }
-
-          const nextElapsed = elapsedRef.current;
-          const increment = distanceBetween(locationRef.current, nextLocation);
-          const updatedDistance = distanceRef.current + increment;
-          const paceMinPerKm = updatedDistance
-            ? (nextElapsed / 60) / (updatedDistance / 1000)
-            : 0;
-          const sample = {
-            latitude: nextLocation.latitude,
-            longitude: nextLocation.longitude,
-            timestamp: new Date().toISOString(),
-            secondsElapsed: nextElapsed,
-            paceMinPerKm,
-            distanceMeters: updatedDistance,
-          };
-
-          locationRef.current = nextLocation;
-          distanceRef.current = updatedDistance;
-          setCurrentLocation(nextLocation);
-          setDistanceMeters(updatedDistance);
-          setLocations((prev) => [...prev, sample]);
-        }
-      );
-
-      locationWatcherRef.current = watcher;
-    };
-
-    startWatcher();
-
-    return () => {
-      isActive = false;
-      if (locationWatcherRef.current) {
-        locationWatcherRef.current.remove();
-        locationWatcherRef.current = null;
-      }
-    };
-  }, [isPaused, isCountingDown, locationStatus]);
 
   useEffect(() => {
     if (isPaused || isCountingDown) {
@@ -342,6 +292,55 @@ export function RunScreen({
     return (elapsedSeconds / 60) / (distanceMeters / 1000);
   }, [distanceMeters, elapsedSeconds]);
 
+  const handleUserLocationChange = useCallback(
+    (event: { nativeEvent: { coordinate?: { latitude: number; longitude: number } } }) => {
+      const coordinate = event.nativeEvent.coordinate;
+      if (!coordinate) {
+        return;
+      }
+
+      const nextLocation = {
+        latitude: coordinate.latitude,
+        longitude: coordinate.longitude,
+      };
+
+      setCurrentLocation(nextLocation);
+
+      if (isPaused || isCountingDown) {
+        locationRef.current = nextLocation;
+        return;
+      }
+
+      if (!hasLocationFixRef.current) {
+        hasLocationFixRef.current = true;
+        locationRef.current = nextLocation;
+        return;
+      }
+
+      const nextElapsed = elapsedRef.current;
+      const increment = distanceBetween(locationRef.current, nextLocation);
+      const updatedDistance = distanceRef.current + increment;
+      const paceMinPerKm = updatedDistance
+        ? (nextElapsed / 60) / (updatedDistance / 1000)
+        : 0;
+
+      const sample = {
+        latitude: nextLocation.latitude,
+        longitude: nextLocation.longitude,
+        timestamp: new Date().toISOString(),
+        secondsElapsed: nextElapsed,
+        paceMinPerKm,
+        distanceMeters: updatedDistance,
+      };
+
+      locationRef.current = nextLocation;
+      distanceRef.current = updatedDistance;
+      setDistanceMeters(updatedDistance);
+      setLocations((prev) => [...prev, sample]);
+    },
+    [isPaused, isCountingDown]
+  );
+
   const mapRegion = useMemo(
     () => ({
       latitude: currentLocation.latitude,
@@ -352,9 +351,12 @@ export function RunScreen({
     [currentLocation]
   );
 
+  const canShowMap = locationStatus !== "denied";
   const mapSubtitle =
     locationStatus === "granted"
       ? `GPS ativo · ${locations.length} pontos`
+      : locationStatus === "undetermined"
+      ? "Solicitando localização..."
       : "Permissão de localização necessária";
 
   const handleHoldStart = () => {
@@ -418,8 +420,15 @@ export function RunScreen({
             <Text style={styles.mapSubtitle}>{mapSubtitle}</Text>
           </View>
           <View style={styles.mapContainer}>
-            {locationStatus === "granted" ? (
-              <MapView style={styles.map} region={mapRegion}>
+            {canShowMap ? (
+              <MapView
+                style={styles.map}
+                region={mapRegion}
+                showsUserLocation
+                followsUserLocation
+                showsMyLocationButton
+                onUserLocationChange={handleUserLocationChange}
+              >
                 <Marker coordinate={currentLocation} />
                 {locations.length > 1 && (
                   <Polyline
