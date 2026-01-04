@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  PermissionsAndroid,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -8,7 +9,9 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
+import MapView, { Marker, Polyline } from "react-native-maps";
 import {
   AssistantEvent,
   AssistantSettings,
@@ -24,6 +27,8 @@ interface RunScreenProps {
   onFinish: (run: RunSummary) => void;
   onBack: () => void;
 }
+
+type LocationStatus = "granted" | "denied" | "undetermined";
 
 const initialLocation = {
   latitude: -22.9068,
@@ -93,12 +98,16 @@ export function RunScreen({
   const [currentLocation, setCurrentLocation] = useState(initialLocation);
   const [locations, setLocations] = useState<RunSummary["locations"]>([]);
   const [assistantEvents, setAssistantEvents] = useState<AssistantEvent[]>([]);
+  const [locationStatus, setLocationStatus] =
+    useState<LocationStatus>("undetermined");
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [isHoldingFinish, setIsHoldingFinish] = useState(false);
   const holdProgress = useRef(new Animated.Value(0)).current;
   const startTimeRef = useRef(new Date());
   const elapsedRef = useRef(0);
   const distanceRef = useRef(0);
   const locationRef = useRef(initialLocation);
+  const hasLocationFixRef = useRef(false);
   const lastAnnouncementRef = useRef({ minutes: 0, km: 0 });
 
   useEffect(() => {
@@ -134,36 +143,65 @@ export function RunScreen({
   }, [currentLocation]);
 
   useEffect(() => {
+    if (Platform.OS !== "android") {
+      setLocationStatus("granted");
+      setLocationError(null);
+      return;
+    }
+
+    let isMounted = true;
+
+    const requestPermission = async () => {
+      try {
+        const status = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: "Permitir localização",
+            message: "Precisamos da sua localização para mostrar o mapa ao vivo.",
+            buttonPositive: "Ok",
+          }
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (status === PermissionsAndroid.RESULTS.GRANTED) {
+          setLocationStatus("granted");
+          setLocationError(null);
+        } else {
+          setLocationStatus("denied");
+          setLocationError("Permita o acesso à localização para ver o mapa ao vivo.");
+        }
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+        setLocationStatus("denied");
+        setLocationError("Não foi possível acessar a localização no momento.");
+      }
+    };
+
+    requestPermission();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (isPaused || isCountingDown) {
       return;
     }
 
     const interval = setInterval(() => {
       const nextElapsed = elapsedRef.current + 1;
-      const current = locationRef.current;
-      const nextLocation = {
-        latitude: current.latitude + (Math.random() - 0.5) * 0.00015,
-        longitude: current.longitude + (Math.random() - 0.5) * 0.00015,
-      };
-      const increment = distanceBetween(current, nextLocation);
-      const updatedDistance = distanceRef.current + increment;
+      const updatedDistance = distanceRef.current;
       const paceMinPerKm = updatedDistance
         ? (nextElapsed / 60) / (updatedDistance / 1000)
         : 0;
 
-      const sample = {
-        latitude: nextLocation.latitude,
-        longitude: nextLocation.longitude,
-        timestamp: new Date().toISOString(),
-        secondsElapsed: nextElapsed,
-        paceMinPerKm,
-        distanceMeters: updatedDistance,
-      };
-
       setElapsedSeconds(nextElapsed);
-      setDistanceMeters(updatedDistance);
-      setCurrentLocation(nextLocation);
-      setLocations((prev) => [...prev, sample]);
 
       if (assistantSettings.enabled) {
         const shouldAnnounce = () => {
@@ -254,6 +292,73 @@ export function RunScreen({
     return (elapsedSeconds / 60) / (distanceMeters / 1000);
   }, [distanceMeters, elapsedSeconds]);
 
+  const handleUserLocationChange = useCallback(
+    (event: { nativeEvent: { coordinate?: { latitude: number; longitude: number } } }) => {
+      const coordinate = event.nativeEvent.coordinate;
+      if (!coordinate) {
+        return;
+      }
+
+      const nextLocation = {
+        latitude: coordinate.latitude,
+        longitude: coordinate.longitude,
+      };
+
+      setCurrentLocation(nextLocation);
+
+      if (isPaused || isCountingDown) {
+        locationRef.current = nextLocation;
+        return;
+      }
+
+      if (!hasLocationFixRef.current) {
+        hasLocationFixRef.current = true;
+        locationRef.current = nextLocation;
+        return;
+      }
+
+      const nextElapsed = elapsedRef.current;
+      const increment = distanceBetween(locationRef.current, nextLocation);
+      const updatedDistance = distanceRef.current + increment;
+      const paceMinPerKm = updatedDistance
+        ? (nextElapsed / 60) / (updatedDistance / 1000)
+        : 0;
+
+      const sample = {
+        latitude: nextLocation.latitude,
+        longitude: nextLocation.longitude,
+        timestamp: new Date().toISOString(),
+        secondsElapsed: nextElapsed,
+        paceMinPerKm,
+        distanceMeters: updatedDistance,
+      };
+
+      locationRef.current = nextLocation;
+      distanceRef.current = updatedDistance;
+      setDistanceMeters(updatedDistance);
+      setLocations((prev) => [...prev, sample]);
+    },
+    [isPaused, isCountingDown]
+  );
+
+  const mapRegion = useMemo(
+    () => ({
+      latitude: currentLocation.latitude,
+      longitude: currentLocation.longitude,
+      latitudeDelta: 0.005,
+      longitudeDelta: 0.005,
+    }),
+    [currentLocation]
+  );
+
+  const canShowMap = locationStatus !== "denied";
+  const mapSubtitle =
+    locationStatus === "granted"
+      ? `GPS ativo · ${locations.length} pontos`
+      : locationStatus === "undetermined"
+      ? "Solicitando localização..."
+      : "Permissão de localização necessária";
+
   const handleHoldStart = () => {
     setIsHoldingFinish(true);
     holdProgress.setValue(0);
@@ -312,12 +417,39 @@ export function RunScreen({
         <View style={styles.mapCard}>
           <View style={styles.mapHeader}>
             <Text style={styles.mapTitle}>Mapa ao vivo</Text>
-            <Text style={styles.mapSubtitle}>GPS ativo · {locations.length} pontos</Text>
+            <Text style={styles.mapSubtitle}>{mapSubtitle}</Text>
           </View>
-          <View style={styles.mapPlaceholder}>
-            <View style={styles.mapDot} />
-            <Text style={styles.mapText}>Lat {currentLocation.latitude.toFixed(5)}</Text>
-            <Text style={styles.mapText}>Lon {currentLocation.longitude.toFixed(5)}</Text>
+          <View style={styles.mapContainer}>
+            {canShowMap ? (
+              <MapView
+                style={styles.map}
+                region={mapRegion}
+                showsUserLocation
+                followsUserLocation
+                showsMyLocationButton
+                onUserLocationChange={handleUserLocationChange}
+              >
+                <Marker coordinate={currentLocation} />
+                {locations.length > 1 && (
+                  <Polyline
+                    coordinates={locations.map((point) => ({
+                      latitude: point.latitude,
+                      longitude: point.longitude,
+                    }))}
+                    strokeColor="#1F5EFF"
+                    strokeWidth={3}
+                  />
+                )}
+              </MapView>
+            ) : (
+              <View style={styles.mapPlaceholder}>
+                <View style={styles.mapDot} />
+                <Text style={styles.mapText}>Localização indisponível</Text>
+                {locationError && (
+                  <Text style={styles.mapHint}>{locationError}</Text>
+                )}
+              </View>
+            )}
           </View>
         </View>
 
@@ -485,12 +617,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#667085",
   },
-  mapPlaceholder: {
+  mapContainer: {
     height: 180,
     borderRadius: 16,
+    overflow: "hidden",
+  },
+  map: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  mapPlaceholder: {
+    flex: 1,
     backgroundColor: "#EEF4FF",
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 12,
   },
   mapDot: {
     width: 12,
@@ -502,6 +642,13 @@ const styles = StyleSheet.create({
   mapText: {
     fontSize: 12,
     color: "#1D2939",
+    fontWeight: "600",
+  },
+  mapHint: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#667085",
+    textAlign: "center",
   },
   metricsRow: {
     flexDirection: "row",
